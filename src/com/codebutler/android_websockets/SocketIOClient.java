@@ -8,10 +8,12 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.List;
 
 import org.apache.http.HttpResponse;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.client.methods.HttpUriRequest;
+import org.apache.http.message.BasicNameValuePair;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -36,10 +38,12 @@ public class SocketIOClient {
     int mHeartbeat;
     int mClosingTimeout;
     WebSocketClient mClient;
+    private List<BasicNameValuePair> mExtraHeaders;
 
-    public SocketIOClient(URI uri, Handler handler) {
+    public SocketIOClient(URI uri, Handler handler, List<BasicNameValuePair> extraHeaders) {
         mURI = uri;
         mHandler = handler;
+        mExtraHeaders = extraHeaders;
     }
 
     private static String downloadUriAsString(final HttpUriRequest req) throws IOException {
@@ -170,7 +174,7 @@ public class SocketIOClient {
                     }
                 }, mHeartbeat);
             }
-        }, null);
+        }, mExtraHeaders);
         mClient.connect();
     }
 
@@ -180,12 +184,14 @@ public class SocketIOClient {
 
     private void cleanup() {
         try {
-            mClient.disconnect();
+            if (mClient != null)
+                mClient.disconnect();
             mClient = null;
         }
         catch (IOException e) {
         }
-        mSendLooper.quit();
+        if (mSendLooper != null)
+            mSendLooper.quit();
         mSendLooper = null;
         mSendHandler = null;
     }
