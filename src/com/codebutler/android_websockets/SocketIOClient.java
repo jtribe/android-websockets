@@ -8,12 +8,16 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.Arrays;
 import java.util.HashSet;
-import java.util.List;
 
 import org.apache.http.HttpResponse;
+import org.apache.http.client.CookieStore;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.client.methods.HttpUriRequest;
-import org.apache.http.message.BasicNameValuePair;
+import org.apache.http.client.protocol.ClientContext;
+import org.apache.http.impl.client.BasicCookieStore;
+import org.apache.http.impl.client.DefaultHttpClient;
+import org.apache.http.impl.cookie.BasicClientCookie;
+import org.apache.http.protocol.BasicHttpContext;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -38,18 +42,31 @@ public class SocketIOClient {
     int mHeartbeat;
     int mClosingTimeout;
     WebSocketClient mClient;
-    private List<BasicNameValuePair> mExtraHeaders;
+    private static BasicHttpContext mHttpContext;
+    private static CookieStore mCookieStore;
+    private DefaultHttpClient mHttpClient;
 
-    public SocketIOClient(URI uri, Handler handler, List<BasicNameValuePair> extraHeaders) {
+    public SocketIOClient(URI uri, Handler handler) {
         mURI = uri;
         mHandler = handler;
-        mExtraHeaders = extraHeaders;
+        mCookieStore = new BasicCookieStore();
+        mHttpClient = new DefaultHttpClient();
+        mHttpContext = new BasicHttpContext();
+    }
+    
+    public void addCookie(String host, String path, String key, String value){
+        BasicClientCookie cookie = new BasicClientCookie(key, value);
+        cookie.setDomain(host);
+        cookie.setPath(path);
+        mCookieStore = mHttpClient.getCookieStore();
+        mCookieStore.addCookie(cookie);
     }
 
     private static String downloadUriAsString(final HttpUriRequest req) throws IOException {
+        mHttpContext.setAttribute(ClientContext.COOKIE_STORE, mCookieStore);
         AndroidHttpClient client = AndroidHttpClient.newInstance("android-websockets");
         try {
-            HttpResponse res = client.execute(req);
+            HttpResponse res = client.execute(req, mHttpContext);
             return readToEnd(res.getEntity().getContent());
         }
         finally {
@@ -174,7 +191,7 @@ public class SocketIOClient {
                     }
                 }, mHeartbeat);
             }
-        }, mExtraHeaders);
+        }, null);
         mClient.connect();
     }
 
