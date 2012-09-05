@@ -1,11 +1,14 @@
 package com.codebutler.android_websockets;
 
+import info.justoneplanet.android.kaomoji.BuildConfig;
+
 import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.net.UnknownHostException;
 import java.util.Arrays;
 import java.util.HashSet;
 
@@ -24,15 +27,13 @@ import org.json.JSONObject;
 
 import android.net.http.AndroidHttpClient;
 import android.os.Looper;
+import android.util.Log;
 
 public class SocketIOClient {
     public static interface Handler {
         public void onConnect();
-
         public void on(String event, JSONArray arguments);
-
         public void onDisconnect(int code, String reason);
-
         public void onError(Exception error);
     }
 
@@ -64,6 +65,7 @@ public class SocketIOClient {
 
     private static String downloadUriAsString(final HttpUriRequest req) throws IOException {
         mHttpContext.setAttribute(ClientContext.COOKIE_STORE, mCookieStore);
+        if (BuildConfig.DEBUG) Log.e("cookie", "" + mCookieStore.getCookies().get(0));
         AndroidHttpClient client = AndroidHttpClient.newInstance("android-websockets");
         try {
             HttpResponse res = client.execute(req, mHttpContext);
@@ -93,17 +95,22 @@ public class SocketIOClient {
     android.os.Handler mSendHandler;
     Looper mSendLooper;
 
-    public void emit(String name, JSONArray args) throws JSONException {
+    public void emit(String name, JSONArray args) throws JSONException, UnknownHostException {
         final JSONObject event = new JSONObject();
         event.put("name", name);
         event.put("args", args);
         System.out.println(event.toString());
-        mSendHandler.post(new Runnable() {
-            @Override
-            public void run() {
-                mClient.send(String.format("5:::%s", event.toString()));
-            }
-        });
+        if (mSendHandler != null) {
+            mSendHandler.post(new Runnable() {
+                @Override
+                public void run() {
+                    mClient.send(String.format("5:::%s", event.toString()));
+                }
+            });
+        }
+        else {
+            throw new UnknownHostException("Out of service.");
+        }
     }
 
     private void connectSession() throws URISyntaxException {
@@ -117,12 +124,12 @@ public class SocketIOClient {
             @Override
             public void onMessage(String message) {
                 try {
-                    System.out.println(message);
                     String[] parts = message.split(":", 4);
                     int code = Integer.parseInt(parts[0]);
                     switch (code) {
                     case 1:
                         onConnect();
+                        mHandler.onConnect();
                         break;
                     case 2:
                         // heartbeat
@@ -193,6 +200,14 @@ public class SocketIOClient {
             }
         }, null);
         mClient.connect();
+    }
+
+    public boolean isConnected() {
+        return mClient.isConnected();
+    }
+
+    public boolean isClosed() {
+        return mClient.isClosed();
     }
 
     public void disconnect() throws IOException {

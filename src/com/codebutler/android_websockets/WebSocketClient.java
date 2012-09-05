@@ -129,6 +129,14 @@ public class WebSocketClient {
         mThread.start();
     }
 
+    public boolean isConnected() {
+        return mSocket.isConnected();
+    }
+
+    public boolean isClosed() {
+        return mSocket.isClosed();
+    }
+
     public void disconnect() throws IOException {
         if (mSocket != null) {
             mSocket.close();
