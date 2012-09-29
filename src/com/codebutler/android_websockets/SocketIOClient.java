@@ -1,7 +1,5 @@
 package com.codebutler.android_websockets;
 
-import info.justoneplanet.android.kaomoji.BuildConfig;
-
 import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.IOException;
@@ -9,17 +7,23 @@ import java.io.InputStream;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.UnknownHostException;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.Iterator;
+import java.util.Map;
 
 import org.apache.http.HttpResponse;
+import org.apache.http.NameValuePair;
 import org.apache.http.client.CookieStore;
+import org.apache.http.client.HttpResponseException;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.client.methods.HttpUriRequest;
 import org.apache.http.client.protocol.ClientContext;
+import org.apache.http.client.utils.URLEncodedUtils;
 import org.apache.http.impl.client.BasicCookieStore;
-import org.apache.http.impl.client.DefaultHttpClient;
 import org.apache.http.impl.cookie.BasicClientCookie;
+import org.apache.http.message.BasicNameValuePair;
 import org.apache.http.protocol.BasicHttpContext;
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -27,6 +31,7 @@ import org.json.JSONObject;
 
 import android.net.http.AndroidHttpClient;
 import android.os.Looper;
+import android.text.TextUtils;
 import android.util.Log;
 
 public class SocketIOClient {
@@ -34,6 +39,7 @@ public class SocketIOClient {
         public void onConnect();
         public void on(String event, JSONArray arguments);
         public void onDisconnect(int code, String reason);
+        public void onHandshakeError(HttpResponseException error);
         public void onError(Exception error);
     }
 
@@ -43,32 +49,47 @@ public class SocketIOClient {
     int mHeartbeat;
     int mClosingTimeout;
     WebSocketClient mClient;
-    private static BasicHttpContext mHttpContext;
     private static CookieStore mCookieStore;
-    private DefaultHttpClient mHttpClient;
+    private String mQuery;
 
     public SocketIOClient(URI uri, Handler handler) {
         mURI = uri;
         mHandler = handler;
         mCookieStore = new BasicCookieStore();
-        mHttpClient = new DefaultHttpClient();
-        mHttpContext = new BasicHttpContext();
     }
     
-    public void addCookie(String host, String path, String key, String value){
-        BasicClientCookie cookie = new BasicClientCookie(key, value);
-        cookie.setDomain(host);
-        cookie.setPath(path);
-        mCookieStore = mHttpClient.getCookieStore();
-        mCookieStore.addCookie(cookie);
+    public void setCookie(Map<String, Map<String, String>> data){
+        Iterator<String> it = data.keySet().iterator();
+        while (it.hasNext()) {
+            String key = (String) it.next();
+            BasicClientCookie cookie = new BasicClientCookie(key, data.get(key).get("value"));
+            cookie.setDomain(data.get(key).get("host"));
+            cookie.setPath(data.get(key).get("path"));
+            mCookieStore.addCookie(cookie);
+        }
+    }
+    
+    public void setQuery(Map<String, String> data){
+        ArrayList<NameValuePair> nameValuePair = new ArrayList<NameValuePair>();
+        Iterator<String> it = data.keySet().iterator();
+        while (it.hasNext()) {
+            String key = it.next();
+            nameValuePair.add(new BasicNameValuePair(key, data.get(key)));
+        }
+        mQuery = URLEncodedUtils.format(nameValuePair, "UTF-8");
     }
 
-    private static String downloadUriAsString(final HttpUriRequest req) throws IOException {
-        mHttpContext.setAttribute(ClientContext.COOKIE_STORE, mCookieStore);
-        if (BuildConfig.DEBUG) Log.e("cookie", "" + mCookieStore.getCookies().get(0));
+    private static String downloadUriAsString(final HttpUriRequest req) throws IOException, HttpResponseException {
+        BasicHttpContext httpContext = new BasicHttpContext();
+        if (mCookieStore != null) {
+            httpContext.setAttribute(ClientContext.COOKIE_STORE, mCookieStore);
+        }
         AndroidHttpClient client = AndroidHttpClient.newInstance("android-websockets");
         try {
-            HttpResponse res = client.execute(req, mHttpContext);
+            HttpResponse res = client.execute(req, httpContext);
+            if (res.getStatusLine().getStatusCode() >= 400) {
+                throw new HttpResponseException(res.getStatusLine().getStatusCode(), res.getStatusLine().getReasonPhrase());
+            }
             return readToEnd(res.getEntity().getContent());
         }
         finally {
@@ -233,9 +254,14 @@ public class SocketIOClient {
             return;
         new Thread() {
             public void run() {
-                HttpPost post = new HttpPost(mURI.toString() + "/socket.io/1/");
+                String uri = mURI.toString() + "/socket.io/1/";
+                if (!TextUtils.isEmpty(mQuery)) {
+                    uri = uri + "?" + mQuery;
+                }
+                HttpPost post = new HttpPost(uri);
                 try {
                     String line = downloadUriAsString(post);
+                    Log.e("line", line);
                     String[] parts = line.split(":");
                     mSession = parts[0];
                     String heartbeat = parts[1];
@@ -254,6 +280,9 @@ public class SocketIOClient {
                     connectSession();
 
                     Looper.loop();
+                }
+                catch (HttpResponseException e) {
+                    mHandler.onHandshakeError(e);
                 }
                 catch (Exception e) {
                     mHandler.onError(e);
