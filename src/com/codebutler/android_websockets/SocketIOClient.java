@@ -6,28 +6,40 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.net.UnknownHostException;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.Iterator;
+import java.util.Map;
 
 import org.apache.http.HttpResponse;
+import org.apache.http.NameValuePair;
+import org.apache.http.client.CookieStore;
+import org.apache.http.client.HttpResponseException;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.client.methods.HttpUriRequest;
-import org.apache.http.client.utils.URIUtils;
+import org.apache.http.client.protocol.ClientContext;
+import org.apache.http.client.utils.URLEncodedUtils;
+import org.apache.http.impl.client.BasicCookieStore;
+import org.apache.http.impl.cookie.BasicClientCookie;
+import org.apache.http.message.BasicNameValuePair;
+import org.apache.http.protocol.BasicHttpContext;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
 import android.net.http.AndroidHttpClient;
 import android.os.Looper;
+import android.text.TextUtils;
+import android.util.Log;
 
 public class SocketIOClient {
     public static interface Handler {
         public void onConnect();
-
         public void on(String event, JSONArray arguments);
-
         public void onDisconnect(int code, String reason);
-
+        public void onHandshakeError(HttpResponseException error);
         public void onError(Exception error);
     }
 
@@ -37,16 +49,47 @@ public class SocketIOClient {
     int mHeartbeat;
     int mClosingTimeout;
     WebSocketClient mClient;
+    private static CookieStore mCookieStore;
+    private String mQuery;
 
     public SocketIOClient(URI uri, Handler handler) {
         mURI = uri;
         mHandler = handler;
+        mCookieStore = new BasicCookieStore();
+    }
+    
+    public void setCookie(Map<String, Map<String, String>> data){
+        Iterator<String> it = data.keySet().iterator();
+        while (it.hasNext()) {
+            String key = (String) it.next();
+            BasicClientCookie cookie = new BasicClientCookie(key, data.get(key).get("value"));
+            cookie.setDomain(data.get(key).get("host"));
+            cookie.setPath(data.get(key).get("path"));
+            mCookieStore.addCookie(cookie);
+        }
+    }
+    
+    public void setQuery(Map<String, String> data){
+        ArrayList<NameValuePair> nameValuePair = new ArrayList<NameValuePair>();
+        Iterator<String> it = data.keySet().iterator();
+        while (it.hasNext()) {
+            String key = it.next();
+            nameValuePair.add(new BasicNameValuePair(key, data.get(key)));
+        }
+        mQuery = URLEncodedUtils.format(nameValuePair, "UTF-8");
     }
 
-    private static String downloadUriAsString(final HttpUriRequest req) throws IOException {
+    private static String downloadUriAsString(final HttpUriRequest req) throws IOException, HttpResponseException {
+        BasicHttpContext httpContext = new BasicHttpContext();
+        if (mCookieStore != null) {
+            httpContext.setAttribute(ClientContext.COOKIE_STORE, mCookieStore);
+        }
         AndroidHttpClient client = AndroidHttpClient.newInstance("android-websockets");
         try {
-            HttpResponse res = client.execute(req);
+            HttpResponse res = client.execute(req, httpContext);
+            if (res.getStatusLine().getStatusCode() >= 400) {
+                throw new HttpResponseException(res.getStatusLine().getStatusCode(), res.getStatusLine().getReasonPhrase());
+            }
             return readToEnd(res.getEntity().getContent());
         }
         finally {
@@ -73,17 +116,22 @@ public class SocketIOClient {
     android.os.Handler mSendHandler;
     Looper mSendLooper;
 
-    public void emit(String name, JSONArray args) throws JSONException {
+    public void emit(String name, JSONArray args) throws JSONException, UnknownHostException {
         final JSONObject event = new JSONObject();
         event.put("name", name);
         event.put("args", args);
         System.out.println(event.toString());
-        mSendHandler.post(new Runnable() {
-            @Override
-            public void run() {
-                mClient.send(String.format("5:::%s", event.toString()));
-            }
-        });
+        if (mSendHandler != null) {
+            mSendHandler.post(new Runnable() {
+                @Override
+                public void run() {
+                    mClient.send(String.format("5:::%s", event.toString()));
+                }
+            });
+        }
+        else {
+            throw new UnknownHostException("Out of service.");
+        }
     }
 
     private void connectSession() throws URISyntaxException {
@@ -102,12 +150,12 @@ public class SocketIOClient {
             @Override
             public void onMessage(String message) {
                 try {
-                    System.out.println(message);
                     String[] parts = message.split(":", 4);
                     int code = Integer.parseInt(parts[0]);
                     switch (code) {
                     case 1:
                         onConnect();
+                        mHandler.onConnect();
                         break;
                     case 2:
                         // heartbeat
@@ -180,18 +228,28 @@ public class SocketIOClient {
         mClient.connect();
     }
 
+    public boolean isConnected() {
+        return mClient.isConnected();
+    }
+
+    public boolean isClosed() {
+        return mClient.isClosed();
+    }
+
     public void disconnect() throws IOException {
         cleanup();
     }
 
     private void cleanup() {
         try {
-            mClient.disconnect();
+            if (mClient != null)
+                mClient.disconnect();
             mClient = null;
         }
         catch (IOException e) {
         }
-        mSendLooper.quit();
+        if (mSendLooper != null)
+            mSendLooper.quit();
         mSendLooper = null;
         mSendHandler = null;
     }
@@ -201,9 +259,14 @@ public class SocketIOClient {
             return;
         new Thread() {
             public void run() {
-                HttpPost post = new HttpPost(mURI.toString() + "/socket.io/1/");
+                String uri = mURI.toString() + "/socket.io/1/";
+                if (!TextUtils.isEmpty(mQuery)) {
+                    uri = uri + "?" + mQuery;
+                }
+                HttpPost post = new HttpPost(uri);
                 try {
                     String line = downloadUriAsString(post);
+                    Log.e("line", line);
                     String[] parts = line.split(":");
                     mSession = parts[0];
                     String heartbeat = parts[1];
@@ -222,6 +285,9 @@ public class SocketIOClient {
                     connectSession();
 
                     Looper.loop();
+                }
+                catch (HttpResponseException e) {
+                    mHandler.onHandshakeError(e);
                 }
                 catch (Exception e) {
                     mHandler.onError(e);
