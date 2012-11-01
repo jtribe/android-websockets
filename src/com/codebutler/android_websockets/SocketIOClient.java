@@ -12,6 +12,7 @@ import java.util.HashSet;
 import org.apache.http.HttpResponse;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.client.methods.HttpUriRequest;
+import org.apache.http.client.utils.URIUtils;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -86,6 +87,11 @@ public class SocketIOClient {
     }
 
     private void connectSession() throws URISyntaxException {
+    	// switch https session over to the wss if required
+    	if(mURI.getScheme().equals("https")){
+    		mURI = new URI("https", mURI.getHost(), mURI.getPath(), mURI.getFragment());
+    	}
+
         mClient = new WebSocketClient(new URI(mURI.toString() + "/socket.io/1/websocket/" + mSession), new WebSocketClient.Handler() {
             @Override
             public void onMessage(byte[] data) {
