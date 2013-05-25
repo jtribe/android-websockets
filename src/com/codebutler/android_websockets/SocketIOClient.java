@@ -61,6 +61,7 @@ public class SocketIOClient {
     public void setCookie(Map<String, Map<String, String>> data){
         Iterator<String> it = data.keySet().iterator();
         while (it.hasNext()) {
+        	
             String key = (String) it.next();
             BasicClientCookie cookie = new BasicClientCookie(key, data.get(key).get("value"));
             cookie.setDomain(data.get(key).get("host"));
@@ -147,6 +148,7 @@ public class SocketIOClient {
                 mHandler.onError(new Exception("Unexpected binary data"));
             }
 
+            
             @Override
             public void onMessage(String message) {
                 try {
